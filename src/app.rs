@@ -17,6 +17,7 @@ pub struct WstmApp {
     last_frame: std::time::Instant,
     fps: f32,
     elapsed: f32,
+    debug_log_timer: f32,
 }
 
 impl WstmApp {
@@ -28,7 +29,10 @@ impl WstmApp {
                 config.audio_device = default_output.clone();
             }
         }
-        let _ = audio.start(&config.audio_device);
+        if let Err(err) = audio.start(&config.audio_device) {
+            tracing::warn!("Failed to start audio on '{}': {err}", config.audio_device);
+            let _ = audio.start("");
+        }
         Ok(Self {
             window: None,
             config: config.clone(),
@@ -38,6 +42,7 @@ impl WstmApp {
             last_frame: std::time::Instant::now(),
             fps: 60.0,
             elapsed: 0.0,
+            debug_log_timer: 0.0,
         })
     }
 
@@ -102,6 +107,11 @@ impl ApplicationHandler for WstmApp {
         self.fps = if dt > 0.0 { 1.0 / dt } else { self.fps };
         self.audio.update(dt);
         let metrics = self.audio.metrics();
+        self.debug_log_timer += dt;
+        if self.debug_log_timer > 0.5 {
+            self.debug_log_timer = 0.0;
+            tracing::info!("audio metrics: bass={:.3} mid={:.3} treble={:.3} rms={:.3} peak={:.3} beat={:.3}", metrics.bass_energy, metrics.mid_energy, metrics.treble_energy, metrics.rms, metrics.peak_level, metrics.beat);
+        }
         if let Some(ui) = self.ui.as_mut() {
             ui.audio_state.smoothed = metrics;
             let ctx = egui::Context::default();
@@ -116,9 +126,21 @@ impl ApplicationHandler for WstmApp {
             ctx.begin_pass(raw_input);
             ui.draw(&ctx, self.elapsed, self.fps);
             let _output = ctx.end_pass();
+            self.config = ui.config.clone();
         }
+
+        let active_audio = self.audio.current_device();
+        if self.config.audio_device != active_audio {
+            tracing::info!("Switching audio device from '{}' to '{}'", active_audio, self.config.audio_device);
+            if let Err(err) = self.audio.start(&self.config.audio_device) {
+                tracing::warn!("Failed to restart audio on '{}': {err}", self.config.audio_device);
+                let _ = self.audio.start("");
+            }
+        }
+
         if let Some(renderer) = self.renderer.as_mut() {
-            renderer.render(self.elapsed, metrics);
+            let samples = self.audio.recent_samples(crate::renderer::SAMPLE_COUNT);
+            renderer.render(self.elapsed, metrics, &samples);
         }
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();

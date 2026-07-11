@@ -54,11 +54,11 @@ impl Default for AudioState {
     }
 }
 
-#[derive(Debug)]
 pub struct AudioAnalyzer {
     ring: Arc<Mutex<Vec<f32>>>,
     metrics: Arc<Mutex<AudioMetrics>>,
     state: Arc<Mutex<AudioState>>,
+    stream: Option<cpal::Stream>,
     fft_size: usize,
     last_peak: f32,
     beat_counter: f32,
@@ -73,6 +73,7 @@ impl AudioAnalyzer {
             ring: ring.clone(),
             metrics: metrics.clone(),
             state: state.clone(),
+            stream: None,
             fft_size: 512,
             last_peak: 0.0,
             beat_counter: 0.0,
@@ -118,21 +119,37 @@ impl AudioAnalyzer {
         let host = cpal::default_host();
         let selected_name = device_name.strip_prefix("output: ").or_else(|| device_name.strip_prefix("input: ")).map(str::trim);
 
+        let preferred_keywords = ["blackhole", "soundflower", "ishowu", "loopback", "virtual", "aggregate"];
+
         let input_device = if let Some(name) = selected_name {
             host.input_devices()
                 .ok()
                 .and_then(|mut iter| iter.find(|device| device.name().ok().as_deref() == Some(name)))
                 .or_else(|| {
-                    warn!("Selected output device '{name}' is not available as an input device; falling back to the default input device.");
-                    host.default_input_device()
+                    warn!("Selected device '{name}' is not available as an input device; attempting to find a loopback device or default input.");
+                    host.input_devices().ok().and_then(|mut it| {
+                        it.find(|d| {
+                            d.name().ok().map(|n| {
+                                let low = n.to_lowercase();
+                                preferred_keywords.iter().any(|k| low.contains(k))
+                            }).unwrap_or(false)
+                        })
+                    })
+                    .or_else(|| host.default_input_device())
                 })
         } else {
-            host.default_input_device()
+            host.input_devices().ok().and_then(|mut it| {
+                it.find(|d| {
+                    d.name().ok().map(|n| {
+                        let low = n.to_lowercase();
+                        preferred_keywords.iter().any(|k| low.contains(k))
+                    }).unwrap_or(false)
+                })
+            })
+            .or_else(|| host.default_input_device())
         };
 
-        let device = input_device
-            .or_else(|| host.default_input_device())
-            .ok_or_else(|| anyhow::anyhow!("No audio input device was found"))?;
+        let device = input_device.ok_or_else(|| anyhow::anyhow!("No audio input device was found. Install a loopback device like BlackHole and select it."))?;
 
         let config = device
             .default_input_config()
@@ -168,6 +185,7 @@ impl AudioAnalyzer {
             None,
         )?;
         stream.play()?;
+        self.stream = Some(stream);
         debug!("Audio stream started for {}", device.name().unwrap_or_else(|_| "default".to_string()));
         Ok(())
     }
@@ -187,8 +205,27 @@ impl AudioAnalyzer {
         self.apply_smoothing(dt, metrics);
     }
 
+    pub fn recent_samples(&self, max_len: usize) -> Vec<f32> {
+        let samples = self.ring.lock().unwrap();
+        let len = samples.len();
+        if len == 0 {
+            return vec![0.0; max_len];
+        }
+        if len >= max_len {
+            samples[len - max_len..len].to_vec()
+        } else {
+            let mut out = vec![0.0; max_len - len];
+            out.extend_from_slice(&samples[..]);
+            out
+        }
+    }
+
     pub fn metrics(&self) -> AudioMetrics {
         self.state.lock().unwrap().smoothed
+    }
+
+    pub fn current_device(&self) -> String {
+        self.state.lock().unwrap().active_device.clone()
     }
 
     fn apply_smoothing(&mut self, dt: f32, incoming: AudioMetrics) {

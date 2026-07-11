@@ -3,6 +3,8 @@ use std::borrow::Cow;
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 
+pub const SAMPLE_COUNT: usize = 1024;
+
 #[derive(Debug, Clone, Copy)]
 pub struct RendererConfig {
     pub width: u32,
@@ -39,6 +41,9 @@ pub struct Renderer {
     pub feedback_sampler: wgpu::Sampler,
     pub current_feedback: usize,
     pub frame: usize,
+    pub sample_buffer: wgpu::Buffer,
+    pub sample_bind_group_layout: wgpu::BindGroupLayout,
+    pub sample_bind_group: wgpu::BindGroup,
 }
 
 impl Renderer {
@@ -160,9 +165,19 @@ impl Renderer {
             }),
         ];
 
+        let sample_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sample-bind-group-layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                count: None,
+            }],
+        });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline-layout"),
-            bind_group_layouts: &[&uniform_bind_group_layout, &texture_bind_group_layout],
+            bind_group_layouts: &[&uniform_bind_group_layout, &texture_bind_group_layout, &sample_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -218,6 +233,20 @@ impl Renderer {
             cache: None,
         });
 
+        const SAMPLE_COUNT: usize = 1024;
+        let sample_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("sample-buffer"),
+            size: (SAMPLE_COUNT * std::mem::size_of::<f32>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let sample_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sample-bind-group"),
+            layout: &sample_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: sample_buffer.as_entire_binding() }],
+        });
+
         Ok(Self {
             surface,
             device,
@@ -235,6 +264,9 @@ impl Renderer {
             feedback_textures,
             feedback_views,
             feedback_sampler,
+            sample_buffer,
+            sample_bind_group_layout,
+            sample_bind_group,
             current_feedback: 0,
             frame: 0,
         })
@@ -292,10 +324,18 @@ impl Renderer {
         ];
     }
 
-    pub fn render(&mut self, time: f32, audio: crate::audio::AudioMetrics) {
+    pub fn render(&mut self, time: f32, audio: crate::audio::AudioMetrics, samples: &[f32]) {
         self.frame += 1;
         let uniforms = Uniforms::from_audio(time, audio, self.frame as f32, self.size.width as f32, self.size.height as f32);
         self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+        let mut clipped = vec![0.0f32; SAMPLE_COUNT];
+        if !samples.is_empty() {
+            let src_len = samples.len().min(SAMPLE_COUNT);
+            let src_start = samples.len().saturating_sub(src_len);
+            clipped[SAMPLE_COUNT - src_len..].copy_from_slice(&samples[src_start..src_start + src_len]);
+        }
+        self.queue.write_buffer(&self.sample_buffer, 0, bytemuck::cast_slice(&clipped));
 
         let prev = self.current_feedback;
         let next = 1 - self.current_feedback;
@@ -318,6 +358,7 @@ impl Renderer {
             pass.set_pipeline(&self.sim_pipeline);
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             pass.set_bind_group(1, &self.feedback_bind_groups[prev], &[]);
+            pass.set_bind_group(2, &self.sample_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
 
@@ -336,6 +377,7 @@ impl Renderer {
             pass.set_pipeline(&self.display_pipeline);
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             pass.set_bind_group(1, &self.feedback_bind_groups[next], &[]);
+            pass.set_bind_group(2, &self.sample_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
 

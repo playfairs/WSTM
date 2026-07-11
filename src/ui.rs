@@ -54,13 +54,17 @@ impl UiController {
             ui.horizontal(|ui| {
                 ui.label("Audio device");
                 egui::ComboBox::from_label("")
-                    .selected_text(if self.config.audio_device.is_empty() { "Default" } else { &self.config.audio_device })
+                    .selected_text(if self.config.audio_device.is_empty() { "Default (input)" } else { &self.config.audio_device })
                     .show_ui(ui, |ui| {
                         for device in &self.audio_state.devices {
                             ui.selectable_value(&mut self.config.audio_device, device.clone(), device.as_str());
                         }
                     });
+                if ui.button("Refresh").clicked() {
+                    self.audio_state.devices = crate::audio::AudioAnalyzer::new().available_devices();
+                }
             });
+            ui.label(format!("Active device: {}", self.audio_state.active_device));
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label("Bass");

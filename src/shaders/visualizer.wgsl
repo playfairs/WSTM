@@ -27,6 +27,9 @@ var feedback_texture: texture_2d<f32>;
 @group(1) @binding(1)
 var feedback_sampler: sampler;
 
+@group(2) @binding(0)
+var<storage, read> samples: array<f32>;
+
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<f32> {
     var positions = array<vec2<f32>, 3>(
@@ -72,6 +75,22 @@ fn palette(t: f32) -> vec3<f32> {
     return a + b * cos(6.28318 * (c * t + d));
 }
 
+fn palette2(t: f32) -> vec3<f32> {
+    let a = vec3<f32>(0.12, 0.28, 0.88);
+    let b = vec3<f32>(0.75, 0.48, 0.96);
+    let c = vec3<f32>(0.92, 0.72, 0.42);
+    let d = vec3<f32>(0.8, 0.4, 0.1);
+    return a + b * cos(6.28318 * (c * t + d));
+}
+
+fn palette3(t: f32) -> vec3<f32> {
+    let a = vec3<f32>(0.04, 0.55, 0.94);
+    let b = vec3<f32>(0.4, 0.82, 0.95);
+    let c = vec3<f32>(0.8, 0.95, 0.42);
+    let d = vec3<f32>(0.17, 0.7, 0.45);
+    return a + b * cos(6.28318 * (c * t + d));
+}
+
 fn swirl(p: vec2<f32>, force: f32) -> vec2<f32> {
     let angle = length(p) * 1.7;
     let s = sin(angle);
@@ -109,12 +128,19 @@ fn sim_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let hue = uniforms.hue_shift * 0.6 + 0.35 + fbm(scaled * 1.3 + time * 0.35) * 0.4;
     let base = palette(hue + center_dist * 0.22 + uniforms.peak * 0.18);
     let ribbon = palette(hue + 0.65 + sin(scaled.x * 5.6 + time * 1.9) * 0.2);
+    let ribbon2 = palette2(hue + 1.25 + cos(scaled.x * 4.2 - time * 2.3) * 0.18);
     let ribbon_mask = smoothstep(0.12, 0.03, abs(scaled.y + sin(scaled.x * 3.2 + time * 2.5) * 0.13));
+    let ribbon2_mask = smoothstep(0.16, 0.05, abs(scaled.y - cos(scaled.x * 2.8 + time * 2.1) * 0.16));
     let accent = palette(hue + 1.1 + uniforms.treble * 0.8);
+    let shimmer = palette3(hue + 0.45 + sin(time * 2.5 + scaled.y * 2.7) * 0.25);
+    let flare = palette2(hue - 0.8 + sin(time * 0.9 + scaled.x * 0.9) * 0.3);
 
     color = color + base * pulse * 0.8;
     color = color + ribbon * ribbon_mask * 0.18 * (0.9 + uniforms.treble * 0.4);
+    color = color + ribbon2 * ribbon2_mask * 0.12 * (0.7 + uniforms.mid * 0.45);
     color = color + accent * (smoothstep(0.18, 0.0, center_dist - 0.02) * 0.24);
+    color = color + shimmer * 0.08 * (0.7 + uniforms.loudness * 0.5) * smoothstep(0.9, 0.2, abs(center_dist - 0.35));
+    color = color + flare * 0.12 * energy * fbm(scaled * 3.1 + time * 0.8);
     color = color + vec3<f32>(0.16, 0.08, 0.04) * energy * 0.9 * fbm(scaled * 2.2 + time * 0.9);
 
     color = clamp(color, vec3<f32>(0.0), vec3<f32>(20.0));
@@ -129,5 +155,20 @@ fn display_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     let bloom = previous * 0.45;
     let gamma = pow(contrast + bloom, vec3<f32>(0.92));
     let color = mix(gamma, palette(uniforms.hue_shift * 0.6 + 0.32), 0.06);
-    return vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+
+    let sample_count: f32 = 1024.0;
+    let idxf = uv.x * (sample_count - 1.0);
+    let idx = i32(floor(idxf));
+    var wave: f32 = 0.0;
+    if (idx >= 0 && idx < i32(sample_count)) {
+        wave = samples[idx];
+    }
+
+    let wave_y = 0.5 + wave * 0.45 * (1.0 + uniforms.rms * 2.0);
+    let dist = abs(uv.y - wave_y);
+    let intensity = abs(wave) * (0.8 + uniforms.rms * 1.8);
+    let line = smoothstep(0.014, 0.0, dist) * smoothstep(0.02, 0.05, abs(wave));
+    let blue = vec3<f32>(0.14, 0.4, 1.0);
+    let out = clamp(color + blue * line * intensity, vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(out, 1.0);
 }
