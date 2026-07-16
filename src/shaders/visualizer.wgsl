@@ -68,27 +68,36 @@ fn fbm(p: vec2<f32>) -> f32 {
 }
 
 fn palette(t: f32) -> vec3<f32> {
-    let a = vec3<f32>(0.26, 0.08, 0.58);
-    let b = vec3<f32>(0.64, 0.92, 0.36);
-    let c = vec3<f32>(0.95, 0.88, 0.65);
-    let d = vec3<f32>(0.16, 0.3, 0.82);
-    return a + b * cos(6.28318 * (c * t + d));
+    let color_a = vec3<f32>(0.972549, 0.882353, 0.956863);
+    let color_b = vec3<f32>(0.870588, 0.815686, 0.984314);
+    let color_c = vec3<f32>(0.819608, 0.784314, 1.0);
+    let p = fract(t);
+    if (p < 0.5) {
+        return mix(color_a, color_b, p * 2.0);
+    }
+    return mix(color_b, color_c, (p - 0.5) * 2.0);
 }
 
 fn palette2(t: f32) -> vec3<f32> {
-    let a = vec3<f32>(0.12, 0.28, 0.88);
-    let b = vec3<f32>(0.75, 0.48, 0.96);
-    let c = vec3<f32>(0.92, 0.72, 0.42);
-    let d = vec3<f32>(0.8, 0.4, 0.1);
-    return a + b * cos(6.28318 * (c * t + d));
+    let color_a = vec3<f32>(0.972549, 0.882353, 0.956863);
+    let color_b = vec3<f32>(0.870588, 0.815686, 0.984314);
+    let color_c = vec3<f32>(0.819608, 0.784314, 1.0);
+    let p = fract(t + 0.33);
+    if (p < 0.5) {
+        return mix(color_a, color_b, p * 2.0);
+    }
+    return mix(color_b, color_c, (p - 0.5) * 2.0);
 }
 
 fn palette3(t: f32) -> vec3<f32> {
-    let a = vec3<f32>(0.04, 0.55, 0.94);
-    let b = vec3<f32>(0.4, 0.82, 0.95);
-    let c = vec3<f32>(0.8, 0.95, 0.42);
-    let d = vec3<f32>(0.17, 0.7, 0.45);
-    return a + b * cos(6.28318 * (c * t + d));
+    let color_a = vec3<f32>(0.972549, 0.882353, 0.956863);
+    let color_b = vec3<f32>(0.870588, 0.815686, 0.984314);
+    let color_c = vec3<f32>(0.819608, 0.784314, 1.0);
+    let p = fract(t + 0.66);
+    if (p < 0.5) {
+        return mix(color_a, color_b, p * 2.0);
+    }
+    return mix(color_b, color_c, (p - 0.5) * 2.0);
 }
 
 fn swirl(p: vec2<f32>, force: f32) -> vec2<f32> {
